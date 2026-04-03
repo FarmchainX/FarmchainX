@@ -6,6 +6,9 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
@@ -33,6 +36,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.HttpStatusCodeException;
 
 @RestController
 @RequestMapping("/api/customer/orders")
@@ -133,6 +137,10 @@ public class CustomerOrderController {
         Map<String, Object> razorpayOrder;
         try {
             razorpayOrder = createRazorpayOrder(amountPaise, receipt, checkoutBundle.orderIds());
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(502).body(Map.of(
+                    "message", sanitizeGatewayErrorMessage(ex.getMessage())
+            ));
         } catch (Exception ex) {
             return ResponseEntity.status(502).body(Map.of(
                     "message", "Unable to initialize payment gateway order."
@@ -162,6 +170,23 @@ public class CustomerOrderController {
                 "razorpayKeyId", razorpayKeyId,
                 "amountPaise", amountPaise,
                 "currency", "INR"
+        ));
+    }
+
+    @GetMapping("/checkout-config-status")
+    public ResponseEntity<Map<String, Object>> checkoutConfigStatus() {
+        boolean keyIdConfigured = !isBlank(razorpayKeyId);
+        boolean keySecretConfigured = !isBlank(razorpayKeySecret);
+        boolean apiBaseConfigured = !isBlank(razorpayApiBase);
+        boolean ready = razorpayEnabled && keyIdConfigured && keySecretConfigured && apiBaseConfigured;
+
+        return ResponseEntity.ok(Map.of(
+                "razorpayEnabled", razorpayEnabled,
+                "keyIdConfigured", keyIdConfigured,
+                "keySecretConfigured", keySecretConfigured,
+                "apiBaseConfigured", apiBaseConfigured,
+                "ready", ready,
+                "message", ready ? "Razorpay checkout is configured." : "Razorpay checkout is not fully configured."
         ));
     }
 
@@ -342,30 +367,34 @@ public class CustomerOrderController {
 
     private Map<String, Object> createRazorpayOrder(long amountPaise, String receipt, List<Long> orderIds) {
         RestTemplate restTemplate = new RestTemplate();
-        String basicAuth = Base64.getEncoder().encodeToString((razorpayKeyId + ":" + razorpayKeySecret).getBytes(StandardCharsets.UTF_8));
-
         Map<String, Object> payload = Map.of(
                 "amount", amountPaise,
                 "currency", "INR",
                 "receipt", receipt,
-                "payment_capture", 1,
                 "notes", Map.of("orderIds", orderIds.toString())
         );
 
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-        headers.set("Authorization", "Basic " + basicAuth);
-        headers.set("Content-Type", "application/json");
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBasicAuth(razorpayKeyId, razorpayKeySecret, StandardCharsets.UTF_8);
+        headers.setContentType(MediaType.APPLICATION_JSON);
 
-        org.springframework.http.HttpEntity<Map<String, Object>> request = new org.springframework.http.HttpEntity<>(payload, headers);
-        Object response = restTemplate.postForObject(razorpayApiBase + "/orders", request, Object.class);
-        if (response instanceof Map<?, ?> raw) {
-            return raw.entrySet().stream()
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(payload, headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.postForEntity(razorpayApiBase + "/orders", request, Map.class);
+            Map<?, ?> body = response.getBody();
+            if (body == null) {
+                return Map.of();
+            }
+            return body.entrySet().stream()
                     .collect(java.util.stream.Collectors.toMap(
                             e -> String.valueOf(e.getKey()),
                             Map.Entry::getValue
                     ));
+        } catch (HttpStatusCodeException ex) {
+            String upstream = ex.getResponseBodyAsString();
+            throw new IllegalStateException("Razorpay order creation failed: " + (isBlank(upstream) ? ex.getStatusText() : upstream), ex);
         }
-        return Map.of();
     }
 
     private List<Map<String, Object>> loadCustomerOrdersForVerification(Long customerUserId, List<Long> orderIds) {
@@ -463,6 +492,17 @@ public class CustomerOrderController {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private String sanitizeGatewayErrorMessage(String message) {
+        if (isBlank(message)) {
+            return "Unable to initialize payment gateway order.";
+        }
+        String normalized = message.trim();
+        if (normalized.startsWith("Razorpay order creation failed:")) {
+            return normalized;
+        }
+        return "Unable to initialize payment gateway order.";
     }
 
     private BigDecimal toDecimal(Object value) {

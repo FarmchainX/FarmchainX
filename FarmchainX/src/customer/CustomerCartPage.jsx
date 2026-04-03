@@ -77,16 +77,23 @@ function CustomerCartPage() {
 
   const placeOrder = async () => {
     setMessage('');
-    if (!addressId || !paymentMethodId) {
-      setMessage('Please select both delivery address and payment method.');
+    if (!addressId) {
+      setMessage('Please select a delivery address.');
       return;
     }
+
+    const resolvedPaymentMethodId = paymentMethodId || String(payments[0]?.id || '');
+    if (!resolvedPaymentMethodId) {
+      setMessage('No payment method found in your account. Add one in Profile to continue.');
+      return;
+    }
+
     setCheckoutState('creating');
 
     try {
       const checkoutRes = await api.post('/api/customer/orders/checkout', {
         addressId: Number(addressId),
-        paymentMethodId: Number(paymentMethodId),
+        paymentMethodId: Number(resolvedPaymentMethodId),
         expectedItems: items.length,
       });
 
@@ -184,7 +191,6 @@ function CustomerCartPage() {
   };
 
   const selectedAddress = addresses.find((a) => String(a.id) === addressId);
-  const selectedPayment = payments.find((m) => String(m.id) === paymentMethodId);
 
   return (
     <CustomerPageShell
@@ -266,25 +272,16 @@ function CustomerCartPage() {
                 )}
               </div>
 
-              {/* Step 2: Payment Method */}
+              {/* Step 2: Fixed Payment Gateway */}
               <div className="group rounded-2xl border-2 border-slate-200 bg-white p-5 transition-all hover:border-emerald-300 hover:shadow-md">
                 <div className="mb-3 flex items-center gap-3">
                   <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-lg font-bold text-emerald-600">💳</div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-slate-600">Step 2: Payment Method</label>
+                  <label className="text-xs font-bold uppercase tracking-widest text-slate-600">Step 2: Secure Payment</label>
                 </div>
-                <select value={paymentMethodId} onChange={(e) => setPaymentMethodId(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100">
-                  <option value="">Choose a payment method...</option>
-                  {payments.map((m) => <option key={m.id} value={m.id}>{m.methodType} {m.provider ? `• ${m.provider}` : ''}</option>)}
-                </select>
-                {selectedPayment && (
-                  <div className="mt-3 flex items-start gap-2 rounded-lg bg-emerald-50 p-3">
-                    <span className="text-lg">✓</span>
-                    <div className="text-xs">
-                      <p className="font-semibold text-emerald-900">{selectedPayment.methodType}</p>
-                      {selectedPayment.provider && <p className="text-emerald-700">{selectedPayment.provider}</p>}
-                    </div>
-                  </div>
-                )}
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  <p className="font-semibold">Razorpay Payment Gateway</p>
+                  <p className="mt-1 text-xs text-emerald-700">After clicking Pay, you will continue directly in Razorpay popup.</p>
+                </div>
               </div>
 
               {/* Alert Messages */}
@@ -316,9 +313,9 @@ function CustomerCartPage() {
               <button
                 type="button"
                 onClick={placeOrder}
-                disabled={items.length === 0 || checkoutBusy || !addressId || !paymentMethodId}
+                disabled={items.length === 0 || checkoutBusy || !addressId}
                 className={`w-full rounded-2xl px-6 py-4 font-bold transition-all duration-300 ${
-                  checkoutBusy || items.length === 0 || !addressId || !paymentMethodId
+                  checkoutBusy || items.length === 0 || !addressId
                     ? 'cursor-not-allowed bg-slate-300 text-slate-400 shadow-none'
                     : 'bg-gradient-to-r from-violet-600 via-purple-600 to-pink-600 text-white shadow-lg hover:shadow-xl hover:from-violet-700 hover:via-purple-700 hover:to-pink-700 active:scale-95'
                 }`}
@@ -392,14 +389,8 @@ function CustomerCartPage() {
                   <span className="text-2xl">💳</span>
                   <div className="flex-1">
                     <p className="text-xs font-bold uppercase text-emerald-600">Payment Via</p>
-                    {selectedPayment ? (
-                      <>
-                        <p className="mt-2 text-sm font-semibold text-emerald-900">{selectedPayment.methodType}</p>
-                        {selectedPayment.provider && <p className="text-xs text-emerald-700">{selectedPayment.provider}</p>}
-                      </>
-                    ) : (
-                      <p className="mt-2 text-sm text-emerald-700">No payment method selected</p>
-                    )}
+                    <p className="mt-2 text-sm font-semibold text-emerald-900">Razorpay</p>
+                    <p className="text-xs text-emerald-700">Secure online gateway</p>
                   </div>
                 </div>
               </div>

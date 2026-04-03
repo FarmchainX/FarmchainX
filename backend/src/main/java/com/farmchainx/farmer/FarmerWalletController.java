@@ -2,6 +2,7 @@ package com.farmchainx.farmer;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,6 +28,7 @@ public class FarmerWalletController {
     private final WalletRepository walletRepository;
     private final WalletTransactionRepository walletTransactionRepository;
     private final OrderRepository orderRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     @GetMapping("/summary")
     public ResponseEntity<Map<String, Object>> getSummary(Authentication authentication) {
@@ -43,6 +45,18 @@ public class FarmerWalletController {
         Map<String, Object> result = new HashMap<>();
         BigDecimal walletTotal = wallet.getTotalEarnings() == null ? BigDecimal.ZERO : wallet.getTotalEarnings();
         BigDecimal walletWithdrawable = wallet.getWithdrawableBalance() == null ? BigDecimal.ZERO : wallet.getWithdrawableBalance();
+
+        // Backfill zeroed wallets from already-paid orders so legacy users can withdraw.
+        if (derivedOrderTotal.compareTo(BigDecimal.ZERO) > 0
+                && walletTotal.compareTo(BigDecimal.ZERO) <= 0
+                && walletWithdrawable.compareTo(BigDecimal.ZERO) <= 0
+                && wallet.getId() != null) {
+            wallet.setTotalEarnings(derivedOrderTotal);
+            wallet.setWithdrawableBalance(derivedOrderTotal);
+            walletRepository.save(wallet);
+            walletTotal = derivedOrderTotal;
+            walletWithdrawable = derivedOrderTotal;
+        }
 
         result.put("totalEarnings", walletTotal.compareTo(BigDecimal.ZERO) > 0 ? walletTotal : derivedOrderTotal);
         result.put("withdrawableBalance", walletWithdrawable.compareTo(BigDecimal.ZERO) > 0 ? walletWithdrawable : derivedOrderTotal);
@@ -74,7 +88,7 @@ public class FarmerWalletController {
 
         // Fallback for older users where wallet transactions were never persisted.
         List<Map<String, Object>> derived = orderRepository.findByFarmerIdOrderByCreatedAtDesc(farmer.getId()).stream()
-                .filter(order -> !"Refunded".equalsIgnoreCase(order.getPaymentStatus()))
+                .filter(order -> isCreditedPaymentStatus(order.getPaymentStatus()))
                 .filter(order -> order.getOrderAmount() != null && order.getOrderAmount().compareTo(BigDecimal.ZERO) > 0)
                 .sorted(Comparator.comparing(Order::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .map(order -> {
@@ -98,7 +112,11 @@ public class FarmerWalletController {
         }
         FarmerProfile farmer = farmerHelperService.getFarmerByEmail(authentication.getName());
         Wallet wallet = walletRepository.findByFarmerId(farmer.getId())
-                .orElseThrow(() -> new IllegalStateException("Wallet not found"));
+                .orElseGet(() -> walletRepository.save(Wallet.builder()
+                        .farmer(farmer)
+                        .totalEarnings(BigDecimal.ZERO)
+                        .withdrawableBalance(BigDecimal.ZERO)
+                        .build()));
 
         BigDecimal withdrawable = wallet.getWithdrawableBalance() == null ? BigDecimal.ZERO : wallet.getWithdrawableBalance();
         if (withdrawable.compareTo(BigDecimal.ZERO) <= 0) {
@@ -140,12 +158,30 @@ public class FarmerWalletController {
     }
 
     private BigDecimal deriveOrderEarningsTotal(Long farmerId) {
-        return orderRepository.findByFarmerIdOrderByCreatedAtDesc(farmerId).stream()
-                .filter(order -> !"Refunded".equalsIgnoreCase(order.getPaymentStatus()))
-                .map(Order::getOrderAmount)
-                .filter(amount -> amount != null && amount.compareTo(BigDecimal.ZERO) > 0)
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal total = jdbcTemplate.queryForObject(
+                """
+                select coalesce(sum(order_amount), 0)
+                from orders
+                where farmer_id = ?
+                  and order_amount is not null
+                  and order_amount > 0
+                  and lower(trim(coalesce(payment_status, ''))) in ('paid', 'captured', 'success', 'completed')
+                """,
+                BigDecimal.class,
+                farmerId
+        );
+        return total.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private boolean isCreditedPaymentStatus(String paymentStatus) {
+        if (paymentStatus == null) {
+            return false;
+        }
+        String normalized = paymentStatus.trim().toLowerCase();
+        return "paid".equals(normalized)
+                || "captured".equals(normalized)
+                || "success".equals(normalized)
+                || "completed".equals(normalized);
     }
 }
 
