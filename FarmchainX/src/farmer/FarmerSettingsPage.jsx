@@ -310,7 +310,7 @@ function FarmerSettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-xs text-slate-500">Dashboard / {t('common.settings')}</p>
+        <p className="text-xs text-slate-500">{t('common.dashboard')} / {t('common.settings')}</p>
         <h2 className="text-xl font-semibold text-slate-900 mt-1">{t('common.settings')}</h2>
         <p className="text-sm text-slate-500">{t('settings.manageSections')}</p>
       </div>
@@ -335,16 +335,16 @@ function FarmerSettingsPage() {
           onClick={() => setShowDeleteConfirm(true)}
           className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
         >
-          {deleting ? 'Deleting...' : t('farmer.deleteAccount')}
+          {deleting ? t('farmer.deleting', { defaultValue: 'Deleting...' }) : t('farmer.deleteAccount')}
         </button>
       </div>
 
       <ConfirmDialog
         open={showDeleteConfirm}
-        title="Delete farmer account?"
-        message="This action will disable your account and you will be logged out from this device."
-        confirmLabel={deleting ? 'Deleting...' : 'Yes, delete'}
-        cancelLabel="Cancel"
+        title={t('farmer.deleteAccountTitle', { defaultValue: 'Delete farmer account?' })}
+        message={t('farmer.deleteAccountConfirmMessage', { defaultValue: 'This action will disable your account and you will be logged out from this device.' })}
+        confirmLabel={deleting ? t('farmer.deleting', { defaultValue: 'Deleting...' }) : t('farmer.yesDelete', { defaultValue: 'Yes, delete' })}
+        cancelLabel={t('common.cancel')}
         onCancel={() => !deleting && setShowDeleteConfirm(false)}
         onConfirm={handleDeleteAccount}
       />

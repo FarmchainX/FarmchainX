@@ -124,6 +124,20 @@ Copy-Item ".env.example" ".env"  # Edit .env with your values
 1. **MySQL**: Local root password (set in `.env`)
 2. **Gmail App Password**: Get from https://myaccount.google.com/apppasswords
 3. **Google OAuth ID**: Get from https://console.cloud.google.com/apis/credentials
+4. **Razorpay Test Keys**: Get from https://dashboard.razorpay.com/ (Test mode)
+
+### Razorpay Customer Checkout Setup
+
+Add the following to `backend/.env`:
+
+```env
+RAZORPAY_ENABLED=true
+RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxx
+RAZORPAY_KEY_SECRET=your_razorpay_test_secret
+RAZORPAY_API_BASE=https://api.razorpay.com/v1
+```
+
+This enables customer-side Razorpay checkout and server-side payment verification.
 
 For detailed setup: See `GITHUB_SETUP.md` before pushing to GitHub
 

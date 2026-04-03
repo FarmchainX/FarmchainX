@@ -3,31 +3,6 @@ import api from '../api/client';
 import { useTranslation } from '../hooks/useTranslation';
 import { formatInr } from '../utils/currency';
 
-const historyRowsFallback = [
-  {
-    id: 'TXN10248',
-    date: '22 Apr 2024',
-    description: 'Order #ORD1024 - Organic Tomatoes',
-    amount: '+₹850.00',
-    status: 'Completed',
-  },
-  {
-    id: 'TXN10247',
-    date: '18 Apr 2024',
-    description: 'Order #ORD1023 - Strawberries',
-    amount: '+₹420.00',
-    status: 'Completed',
-  },
-  {
-    id: 'TXN10245',
-    date: '05 Apr 2024',
-    description: 'Wallet Withdrawal',
-    amount: '-₹500.00',
-    status: 'Processed',
-  },
-];
-
-
 function StatusPill({ status }) {
   let classes =
     'inline-flex items-center rounded-full text-[11px] px-2 py-1 border ';
@@ -61,7 +36,7 @@ function SummaryIcon({ symbol, tone = 'emerald' }) {
 function FarmerPaymentsPage() {
   const { t } = useTranslation();
   const [summary, setSummary] = useState(null);
-  const [history, setHistory] = useState(historyRowsFallback);
+  const [history, setHistory] = useState([]);
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawLoading, setWithdrawLoading] = useState(false);
@@ -86,9 +61,11 @@ function FarmerPaymentsPage() {
               status: t.type === 'CREDIT' ? 'Completed' : 'Processed',
             })),
           );
+        } else {
+          setHistory([]);
         }
       })
-      .catch(() => {});
+      .catch(() => setHistory([]));
   };
 
   useEffect(() => {
@@ -96,13 +73,13 @@ function FarmerPaymentsPage() {
   }, []);
 
   const totalEarnings =
-    summary && summary.totalEarnings != null ? summary.totalEarnings : 3520;
+    summary && summary.totalEarnings != null ? summary.totalEarnings : 0;
   const withdrawable =
     summary && summary.withdrawableBalance != null
       ? summary.withdrawableBalance
-      : 2870;
+      : 0;
   const pending =
-    summary && summary.pendingPayments != null ? summary.pendingPayments : 650;
+    summary && summary.pendingPayments != null ? summary.pendingPayments : 0;
 
   const handleWithdraw = () => {
     setWithdrawError('');
@@ -285,7 +262,20 @@ function FarmerPaymentsPage() {
               </tr>
             </thead>
             <tbody>
-              {history.map((row) => (
+              {history.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center">
+                    <div className="flex flex-col items-center gap-2 text-slate-400">
+                      <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-sm">
+                        🧾
+                      </span>
+                      <p className="text-xs font-medium text-slate-500">
+                        {t('payments.noTransactions', { defaultValue: 'No transactions yet.' })}
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              ) : history.map((row) => (
                 <tr key={row.id} className="border-b border-slate-50">
                   <td className="py-2 pr-4 text-emerald-700 font-medium">
                     {row.id}

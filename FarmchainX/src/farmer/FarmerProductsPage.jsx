@@ -409,7 +409,7 @@ function FarmerProductsPage() {
                         requestDeleteProduct(p);
                       }}
                       className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-red-50 text-slate-400 hover:text-red-500 transition"
-                      title="Delete product"
+                      title={t('products.deleteConfirmTitle', { defaultValue: 'Delete product' })}
                     >
                       🗑
                     </button>
@@ -429,10 +429,10 @@ function FarmerProductsPage() {
 
       <ConfirmDialog
         open={showDeleteConfirm}
-        title="Delete Product?"
+        title={t('products.deleteConfirmTitle')}
         message={`This will permanently remove ${pendingDeleteProduct?.name || 'this product'} from your listing.`}
-        confirmLabel={deletingProduct ? 'Deleting...' : 'Delete'}
-        cancelLabel="Cancel"
+        confirmLabel={deletingProduct ? t('products.deletingProduct') : t('common.delete')}
+        cancelLabel={t('common.cancel')}
         onCancel={() => {
           if (deletingProduct) return;
           setShowDeleteConfirm(false);

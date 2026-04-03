@@ -56,5 +56,37 @@ public class CustomerHelperService {
             // Keep startup resilient when table does not exist yet.
         }
     }
+
+    public void ensureOrderRazorpayOrderIdColumn() {
+        try {
+            jdbcTemplate.execute("alter table orders add column if not exists razorpay_order_id varchar(120)");
+        } catch (Exception ignored) {
+            // Keep startup resilient when table does not exist yet.
+        }
+    }
+
+    public void ensureOrderRazorpayPaymentIdColumn() {
+        try {
+            jdbcTemplate.execute("alter table orders add column if not exists razorpay_payment_id varchar(120)");
+        } catch (Exception ignored) {
+            // Keep startup resilient when table does not exist yet.
+        }
+    }
+
+    public void ensureOrderRazorpaySignatureColumn() {
+        try {
+            jdbcTemplate.execute("alter table orders add column if not exists razorpay_signature varchar(255)");
+        } catch (Exception ignored) {
+            // Keep startup resilient when table does not exist yet.
+        }
+    }
+
+    public void ensureOrderPaymentVerifiedAtColumn() {
+        try {
+            jdbcTemplate.execute("alter table orders add column if not exists payment_verified_at datetime(6)");
+        } catch (Exception ignored) {
+            // Keep startup resilient when table does not exist yet.
+        }
+    }
 }
 

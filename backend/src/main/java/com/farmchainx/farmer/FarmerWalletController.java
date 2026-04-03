@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,10 +26,13 @@ public class FarmerWalletController {
     private final FarmerHelperService farmerHelperService;
     private final WalletRepository walletRepository;
     private final WalletTransactionRepository walletTransactionRepository;
+    private final OrderRepository orderRepository;
 
     @GetMapping("/summary")
     public ResponseEntity<Map<String, Object>> getSummary(Authentication authentication) {
         FarmerProfile farmer = farmerHelperService.getFarmerByEmail(authentication.getName());
+        BigDecimal derivedOrderTotal = deriveOrderEarningsTotal(farmer.getId());
+
         Wallet wallet = walletRepository.findByFarmerId(farmer.getId())
                 .orElseGet(() -> Wallet.builder()
                         .farmer(farmer)
@@ -36,20 +41,54 @@ public class FarmerWalletController {
                         .build());
 
         Map<String, Object> result = new HashMap<>();
-        result.put("totalEarnings", wallet.getTotalEarnings());
-        result.put("withdrawableBalance", wallet.getWithdrawableBalance());
+        BigDecimal walletTotal = wallet.getTotalEarnings() == null ? BigDecimal.ZERO : wallet.getTotalEarnings();
+        BigDecimal walletWithdrawable = wallet.getWithdrawableBalance() == null ? BigDecimal.ZERO : wallet.getWithdrawableBalance();
+
+        result.put("totalEarnings", walletTotal.compareTo(BigDecimal.ZERO) > 0 ? walletTotal : derivedOrderTotal);
+        result.put("withdrawableBalance", walletWithdrawable.compareTo(BigDecimal.ZERO) > 0 ? walletWithdrawable : derivedOrderTotal);
         // Placeholder pending payments until real settlement logic
         result.put("pendingPayments", BigDecimal.ZERO);
         return ResponseEntity.ok(result);
     }
 
     @GetMapping("/transactions")
-    public ResponseEntity<List<WalletTransaction>> getTransactions(Authentication authentication) {
+    public ResponseEntity<List<Map<String, Object>>> getTransactions(Authentication authentication) {
         FarmerProfile farmer = farmerHelperService.getFarmerByEmail(authentication.getName());
-        Wallet wallet = walletRepository.findByFarmerId(farmer.getId())
-                .orElseThrow(() -> new IllegalStateException("Wallet not found"));
-        List<WalletTransaction> txns = walletTransactionRepository.findByWalletIdOrderByCreatedAtDesc(wallet.getId());
-        return ResponseEntity.ok(txns);
+        List<Map<String, Object>> txns = walletRepository.findByFarmerId(farmer.getId())
+                .map(wallet -> walletTransactionRepository.findByWalletIdOrderByCreatedAtDesc(wallet.getId()).stream()
+                        .map(txn -> {
+                            Map<String, Object> row = new HashMap<>();
+                            row.put("id", txn.getId());
+                            row.put("createdAt", txn.getCreatedAt());
+                            row.put("description", txn.getDescription());
+                            row.put("amount", txn.getAmount());
+                            row.put("type", txn.getType());
+                            return row;
+                        })
+                        .toList())
+                .orElse(List.of());
+
+        if (!txns.isEmpty()) {
+            return ResponseEntity.ok(txns);
+        }
+
+        // Fallback for older users where wallet transactions were never persisted.
+        List<Map<String, Object>> derived = orderRepository.findByFarmerIdOrderByCreatedAtDesc(farmer.getId()).stream()
+                .filter(order -> !"Refunded".equalsIgnoreCase(order.getPaymentStatus()))
+                .filter(order -> order.getOrderAmount() != null && order.getOrderAmount().compareTo(BigDecimal.ZERO) > 0)
+                .sorted(Comparator.comparing(Order::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .map(order -> {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("id", "order-" + order.getId());
+                    row.put("createdAt", order.getCreatedAt());
+                    row.put("description", "Order " + (order.getOrderCode() == null ? "" : order.getOrderCode()));
+                    row.put("amount", order.getOrderAmount());
+                    row.put("type", "CREDIT");
+                    return row;
+                })
+                .toList();
+
+        return ResponseEntity.ok(derived);
     }
 
     @PostMapping("/withdraw")
@@ -60,11 +99,26 @@ public class FarmerWalletController {
         FarmerProfile farmer = farmerHelperService.getFarmerByEmail(authentication.getName());
         Wallet wallet = walletRepository.findByFarmerId(farmer.getId())
                 .orElseThrow(() -> new IllegalStateException("Wallet not found"));
-        if (wallet.getWithdrawableBalance().compareTo(request.getAmount()) < 0) {
+
+        BigDecimal withdrawable = wallet.getWithdrawableBalance() == null ? BigDecimal.ZERO : wallet.getWithdrawableBalance();
+        if (withdrawable.compareTo(BigDecimal.ZERO) <= 0) {
+            BigDecimal derivedOrderTotal = deriveOrderEarningsTotal(farmer.getId());
+            if (derivedOrderTotal.compareTo(BigDecimal.ZERO) > 0) {
+                // Bootstrap wallet balances from existing paid/non-refunded order earnings.
+                if (wallet.getTotalEarnings() == null || wallet.getTotalEarnings().compareTo(BigDecimal.ZERO) <= 0) {
+                    wallet.setTotalEarnings(derivedOrderTotal);
+                }
+                wallet.setWithdrawableBalance(derivedOrderTotal);
+                walletRepository.save(wallet);
+                withdrawable = derivedOrderTotal;
+            }
+        }
+
+        if (withdrawable.compareTo(request.getAmount()) < 0) {
             return ResponseEntity.badRequest().body("Insufficient balance");
         }
         // Deduct from withdrawable balance
-        wallet.setWithdrawableBalance(wallet.getWithdrawableBalance().subtract(request.getAmount()));
+        wallet.setWithdrawableBalance(withdrawable.subtract(request.getAmount()));
         walletRepository.save(wallet);
 
         // Create transaction record
@@ -83,6 +137,15 @@ public class FarmerWalletController {
         result.put("success", true);
         result.put("newBalance", wallet.getWithdrawableBalance());
         return ResponseEntity.ok(result);
+    }
+
+    private BigDecimal deriveOrderEarningsTotal(Long farmerId) {
+        return orderRepository.findByFarmerIdOrderByCreatedAtDesc(farmerId).stream()
+                .filter(order -> !"Refunded".equalsIgnoreCase(order.getPaymentStatus()))
+                .map(Order::getOrderAmount)
+                .filter(amount -> amount != null && amount.compareTo(BigDecimal.ZERO) > 0)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
     }
 }
 

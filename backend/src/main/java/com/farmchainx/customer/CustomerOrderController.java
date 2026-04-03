@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
@@ -17,14 +18,21 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+
+import org.springframework.web.client.RestTemplate;
 
 @RestController
 @RequestMapping("/api/customer/orders")
@@ -36,6 +44,18 @@ public class CustomerOrderController {
     private final CustomerAddressRepository addressRepository;
     private final CustomerPaymentMethodRepository paymentMethodRepository;
     private final JdbcTemplate jdbcTemplate;
+
+    @Value("${app.razorpay.enabled:false}")
+    private boolean razorpayEnabled;
+
+    @Value("${app.razorpay.key-id:}")
+    private String razorpayKeyId;
+
+    @Value("${app.razorpay.key-secret:}")
+    private String razorpayKeySecret;
+
+    @Value("${app.razorpay.api-base:https://api.razorpay.com/v1}")
+    private String razorpayApiBase;
 
     public CustomerOrderController(
             CustomerHelperService helperService,
@@ -56,6 +76,10 @@ public class CustomerOrderController {
         helperService.ensureOrderOwnershipColumn();
         helperService.ensureOrderAddressColumn();
         helperService.ensureOrderPaymentColumn();
+        helperService.ensureOrderRazorpayOrderIdColumn();
+        helperService.ensureOrderRazorpayPaymentIdColumn();
+        helperService.ensureOrderRazorpaySignatureColumn();
+        helperService.ensureOrderPaymentVerifiedAtColumn();
     }
 
     @PostMapping
@@ -64,26 +88,162 @@ public class CustomerOrderController {
             Authentication authentication,
             @Valid @RequestBody PlaceOrderRequest request
     ) {
+        try {
+            CheckoutBundle checkoutBundle = buildCheckoutBundle(authentication, request);
+            return ResponseEntity.ok(Map.of(
+                    "orderIds", checkoutBundle.orderIds(),
+                    "message", checkoutBundle.message()
+            ));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("message", ex.getMessage()));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.badRequest().body(Map.of("message", ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/checkout")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> createCheckout(
+            Authentication authentication,
+            @Valid @RequestBody PlaceOrderRequest request
+    ) {
+        if (!razorpayEnabled || isBlank(razorpayKeyId) || isBlank(razorpayKeySecret)) {
+            return ResponseEntity.status(503).body(Map.of(
+                    "message", "Online payments are currently unavailable. Please try again later."
+            ));
+        }
+
+        CheckoutBundle checkoutBundle;
+        try {
+            checkoutBundle = buildCheckoutBundle(authentication, request);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("message", ex.getMessage()));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.badRequest().body(Map.of("message", ex.getMessage()));
+        }
+        if (checkoutBundle.totalAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "message", "Invalid order amount for checkout."
+            ));
+        }
+
+        long amountPaise = checkoutBundle.totalAmount().multiply(new BigDecimal("100")).longValue();
+        String receipt = "fcx-" + checkoutBundle.orderIds().get(0) + "-" + System.currentTimeMillis();
+
+        Map<String, Object> razorpayOrder;
+        try {
+            razorpayOrder = createRazorpayOrder(amountPaise, receipt, checkoutBundle.orderIds());
+        } catch (Exception ex) {
+            return ResponseEntity.status(502).body(Map.of(
+                    "message", "Unable to initialize payment gateway order."
+            ));
+        }
+        Object razorpayOrderId = razorpayOrder.get("id");
+        if (!(razorpayOrderId instanceof String orderId) || isBlank(orderId)) {
+            return ResponseEntity.status(502).body(Map.of(
+                    "message", "Unable to initialize payment gateway order."
+            ));
+        }
+
+        for (Long id : checkoutBundle.orderIds()) {
+            jdbcTemplate.update(
+                    "update orders set razorpay_order_id = ?, payment_status = 'Created' where id = ?",
+                    orderId,
+                    id
+            );
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "orderIds", checkoutBundle.orderIds(),
+                "itemCount", checkoutBundle.itemCount(),
+                "totalAmount", checkoutBundle.totalAmount(),
+                "message", checkoutBundle.message(),
+                "razorpayOrderId", orderId,
+                "razorpayKeyId", razorpayKeyId,
+                "amountPaise", amountPaise,
+                "currency", "INR"
+        ));
+    }
+
+    @PostMapping("/verify-payment")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> verifyPayment(
+            Authentication authentication,
+            @Valid @RequestBody VerifyPaymentRequest request
+    ) {
+        CustomerProfile customer = helperService.getOrCreateCustomer(authentication.getName());
+
+        if (request.getOrderIds() == null || request.getOrderIds().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "No order IDs provided for payment verification."));
+        }
+
+        if (!isValidRazorpaySignature(request.getRazorpayOrderId(), request.getRazorpayPaymentId(), request.getRazorpaySignature())) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Payment verification failed. Invalid signature."));
+        }
+
+        List<Map<String, Object>> orderRows = loadCustomerOrdersForVerification(customer.getUser().getId(), request.getOrderIds());
+        if (orderRows.size() != request.getOrderIds().size()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Some orders could not be verified for this account."));
+        }
+
+        int paidNow = 0;
+        for (Map<String, Object> row : orderRows) {
+            Long orderId = ((Number) row.get("id")).longValue();
+            String currentPaymentStatus = Objects.toString(row.get("paymentStatus"), "");
+            if ("Paid".equalsIgnoreCase(currentPaymentStatus)) {
+                continue;
+            }
+
+            jdbcTemplate.update(
+                    """
+                    update orders
+                    set payment_status = 'Paid',
+                        razorpay_order_id = ?,
+                        razorpay_payment_id = ?,
+                        razorpay_signature = ?,
+                        payment_verified_at = ?
+                    where id = ?
+                    """,
+                    request.getRazorpayOrderId(),
+                    request.getRazorpayPaymentId(),
+                    request.getRazorpaySignature(),
+                    Timestamp.from(OffsetDateTime.now().toInstant()),
+                    orderId
+            );
+
+            creditFarmerWalletFromOrderRow(row);
+            paidNow++;
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "paidNow", paidNow,
+                "message", paidNow > 0 ? "Payment verified and orders marked as paid." : "Orders were already marked paid."
+        ));
+    }
+
+    private CheckoutBundle buildCheckoutBundle(Authentication authentication, PlaceOrderRequest request) {
         CustomerProfile customer = helperService.getOrCreateCustomer(authentication.getName());
 
         CustomerAddress address = addressRepository.findById(request.getAddressId()).orElse(null);
         if (address == null || !address.getCustomer().getId().equals(customer.getId())) {
-            return ResponseEntity.badRequest().build();
+            throw new IllegalArgumentException("Invalid delivery address selected.");
         }
 
         CustomerPaymentMethod paymentMethod = paymentMethodRepository.findById(request.getPaymentMethodId()).orElse(null);
         if (paymentMethod == null || !paymentMethod.getCustomer().getId().equals(customer.getId())) {
-            return ResponseEntity.badRequest().build();
+            throw new IllegalArgumentException("Invalid payment method selected.");
         }
 
         List<CustomerCartItem> cartItems = cartItemRepository.findByCustomerIdOrderByCreatedAtDesc(customer.getId());
         if (cartItems.isEmpty()) {
-            return ResponseEntity.badRequest().build();
+            throw new IllegalArgumentException("Cart is empty.");
         }
 
         List<Long> orderIds = new ArrayList<>();
         List<Long> placedCartItemIds = new ArrayList<>();
         int skippedItems = 0;
+        BigDecimal checkoutTotal = BigDecimal.ZERO;
         for (CustomerCartItem item : cartItems) {
             List<Map<String, Object>> productRows = jdbcTemplate.queryForList(
                     """
@@ -113,6 +273,7 @@ public class CustomerOrderController {
                     : BigDecimal.valueOf(((Number) product.get("pricePerUnit")).doubleValue());
 
             BigDecimal amount = price.multiply(BigDecimal.valueOf(item.getQuantity())).setScale(2, RoundingMode.HALF_UP);
+            checkoutTotal = checkoutTotal.add(amount);
             BigDecimal distance = new BigDecimal("6.00");
             BigDecimal fee = amount.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
 
@@ -159,26 +320,156 @@ public class CustomerOrderController {
                     Long.class,
                     orderCode
             );
-            if (orderId != null) {
-                orderIds.add(orderId);
-                placedCartItemIds.add(item.getId());
-            }
+            orderIds.add(orderId);
+            placedCartItemIds.add(item.getId());
         }
 
         if (orderIds.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of(
-                    "message", "Unable to place order. Some products may be out of stock."
-            ));
+            throw new IllegalStateException("Unable to place order. Some products may be out of stock.");
         }
 
         cartItemRepository.deleteAllById(placedCartItemIds);
 
-        return ResponseEntity.ok(Map.of(
-                "orderIds", orderIds,
-                "message", skippedItems > 0
+        return new CheckoutBundle(
+                orderIds,
+                checkoutTotal.setScale(2, RoundingMode.HALF_UP),
+                cartItems.size(),
+                skippedItems > 0
                         ? "Order placed for available items. Some items were skipped."
                         : "Order placed successfully"
-        ));
+        );
+    }
+
+    private Map<String, Object> createRazorpayOrder(long amountPaise, String receipt, List<Long> orderIds) {
+        RestTemplate restTemplate = new RestTemplate();
+        String basicAuth = Base64.getEncoder().encodeToString((razorpayKeyId + ":" + razorpayKeySecret).getBytes(StandardCharsets.UTF_8));
+
+        Map<String, Object> payload = Map.of(
+                "amount", amountPaise,
+                "currency", "INR",
+                "receipt", receipt,
+                "payment_capture", 1,
+                "notes", Map.of("orderIds", orderIds.toString())
+        );
+
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.set("Authorization", "Basic " + basicAuth);
+        headers.set("Content-Type", "application/json");
+
+        org.springframework.http.HttpEntity<Map<String, Object>> request = new org.springframework.http.HttpEntity<>(payload, headers);
+        Object response = restTemplate.postForObject(razorpayApiBase + "/orders", request, Object.class);
+        if (response instanceof Map<?, ?> raw) {
+            return raw.entrySet().stream()
+                    .collect(java.util.stream.Collectors.toMap(
+                            e -> String.valueOf(e.getKey()),
+                            Map.Entry::getValue
+                    ));
+        }
+        return Map.of();
+    }
+
+    private List<Map<String, Object>> loadCustomerOrdersForVerification(Long customerUserId, List<Long> orderIds) {
+        String placeholders = String.join(",", java.util.Collections.nCopies(orderIds.size(), "?"));
+        Object[] args = new Object[orderIds.size() + 1];
+        args[0] = customerUserId;
+        for (int i = 0; i < orderIds.size(); i++) {
+            args[i + 1] = orderIds.get(i);
+        }
+
+        return jdbcTemplate.queryForList(
+                """
+                select id, farmer_id as farmerId, order_amount as orderAmount, order_code as orderCode, payment_status as paymentStatus
+                from orders
+                where customer_user_id = ? and id in (%s)
+                """.formatted(placeholders),
+                args
+        );
+    }
+
+    private void creditFarmerWalletFromOrderRow(Map<String, Object> row) {
+        BigDecimal orderAmount = row.get("orderAmount") instanceof BigDecimal
+                ? (BigDecimal) row.get("orderAmount")
+                : BigDecimal.valueOf(((Number) row.get("orderAmount")).doubleValue());
+        Long farmerId = ((Number) row.get("farmerId")).longValue();
+        String orderCode = Objects.toString(row.get("orderCode"), "");
+
+        List<Map<String, Object>> walletRows = jdbcTemplate.queryForList(
+                "select id, total_earnings as totalEarnings, withdrawable_balance as withdrawableBalance from wallets where farmer_id = ?",
+                farmerId
+        );
+
+        Long walletId;
+        BigDecimal totalEarnings;
+        BigDecimal withdrawableBalance;
+
+        if (walletRows.isEmpty()) {
+            jdbcTemplate.update(
+                    "insert into wallets (farmer_id, total_earnings, withdrawable_balance) values (?, ?, ?)",
+                    farmerId,
+                    orderAmount,
+                    orderAmount
+            );
+            walletId = jdbcTemplate.queryForObject("select id from wallets where farmer_id = ?", Long.class, farmerId);
+        } else {
+            Map<String, Object> wallet = walletRows.get(0);
+            walletId = ((Number) wallet.get("id")).longValue();
+            totalEarnings = toDecimal(wallet.get("totalEarnings")).add(orderAmount);
+            withdrawableBalance = toDecimal(wallet.get("withdrawableBalance")).add(orderAmount);
+
+            jdbcTemplate.update(
+                    "update wallets set total_earnings = ?, withdrawable_balance = ? where id = ?",
+                    totalEarnings,
+                    withdrawableBalance,
+                    walletId
+            );
+        }
+
+        jdbcTemplate.update(
+                """
+                insert into wallet_transactions (wallet_id, created_at, amount, type, description)
+                values (?, ?, ?, ?, ?)
+                """,
+                walletId,
+                Timestamp.from(OffsetDateTime.now().toInstant()),
+                orderAmount,
+                "CREDIT",
+                "Order " + orderCode + " payment received"
+        );
+    }
+
+    private boolean isValidRazorpaySignature(String razorpayOrderId, String razorpayPaymentId, String razorpaySignature) {
+        if (isBlank(razorpayOrderId) || isBlank(razorpayPaymentId) || isBlank(razorpaySignature) || isBlank(razorpayKeySecret)) {
+            return false;
+        }
+        try {
+            String payload = razorpayOrderId + "|" + razorpayPaymentId;
+            Mac hmacSha256 = Mac.getInstance("HmacSHA256");
+            hmacSha256.init(new SecretKeySpec(razorpayKeySecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] hash = hmacSha256.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+            String expected = bytesToHex(hash);
+            return expected.equals(razorpaySignature);
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    private BigDecimal toDecimal(Object value) {
+        if (value == null) return BigDecimal.ZERO;
+        if (value instanceof BigDecimal decimal) return decimal;
+        if (value instanceof Number number) return BigDecimal.valueOf(number.doubleValue()).setScale(2, RoundingMode.HALF_UP);
+        return BigDecimal.ZERO;
     }
 
     @GetMapping
@@ -261,6 +552,29 @@ public class CustomerOrderController {
         @NotNull
         @Min(1)
         private Integer expectedItems;
+    }
+
+    @Data
+    public static class VerifyPaymentRequest {
+        @NotNull
+        private List<Long> orderIds;
+
+        @NotNull
+        private String razorpayOrderId;
+
+        @NotNull
+        private String razorpayPaymentId;
+
+        @NotNull
+        private String razorpaySignature;
+    }
+
+    private record CheckoutBundle(
+            List<Long> orderIds,
+            BigDecimal totalAmount,
+            int itemCount,
+            String message
+    ) {
     }
 }
 

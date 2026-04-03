@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { useTranslation } from '../hooks/useTranslation';
+import { formatInr } from '../utils/currency';
 
 function StatusChip({ status }) {
   let base = 'inline-flex items-center rounded-full text-[11px] px-2 py-1 border ';
@@ -86,6 +87,7 @@ function FarmerOrdersPage() {
                   <th className="py-2 pr-4 font-medium">{t('farmer.customer', { defaultValue: 'Customer' })}</th>
                   <th className="py-2 pr-4 font-medium">{t('farmer.product', { defaultValue: 'Product' })}</th>
                   <th className="py-2 pr-4 font-medium">{t('farmer.quantity', { defaultValue: 'Quantity' })}</th>
+                  <th className="py-2 pr-4 font-medium">{t('farmer.amountPaid', { defaultValue: 'Amount Paid' })}</th>
                   <th className="py-2 pr-4 font-medium">{t('farmer.status', { defaultValue: 'Status' })}</th>
                   <th className="py-2 pr-4 font-medium">{t('farmer.payment', { defaultValue: 'Payment' })}</th>
                   <th className="py-2 pr-4 font-medium text-right">{t('farmer.actions', { defaultValue: 'Actions' })}</th>
@@ -98,6 +100,7 @@ function FarmerOrdersPage() {
                     <td className="py-2 pr-4 text-slate-700">{row.customerName}</td>
                     <td className="py-2 pr-4 text-slate-700">{row.product ? row.product.name : '—'}</td>
                     <td className="py-2 pr-4 text-slate-700">{row.quantity} {row.quantityUnit}</td>
+                    <td className="py-2 pr-4 text-slate-700">{row.orderAmount != null ? formatInr(row.orderAmount) : '—'}</td>
                     <td className="py-2 pr-4"><StatusChip status={row.status} /></td>
                     <td className="py-2 pr-4">
                       <span className="inline-flex items-center rounded-full bg-emerald-50 text-emerald-700 text-[11px] px-2 py-1 border border-emerald-100">
