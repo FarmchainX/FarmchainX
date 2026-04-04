@@ -1,4 +1,4 @@
-# Farmchainx
+# FarmchainX
 
 Primary guide for this repository. Start here for setup, run, architecture, and documentation links.
 
