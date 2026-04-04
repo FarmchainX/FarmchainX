@@ -1,6 +1,8 @@
 package com.farmchainx.delivery;
 
 import com.farmchainx.auth.RoleType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,6 +12,7 @@ import java.util.Map;
 @Service
 public class DeliveryHelperService {
 
+    private static final Logger logger = LoggerFactory.getLogger(DeliveryHelperService.class);
     private final JdbcTemplate jdbcTemplate;
 
     public DeliveryHelperService(JdbcTemplate jdbcTemplate) {
@@ -64,6 +67,55 @@ public class DeliveryHelperService {
                 String.valueOf(user.get("phone")),
                 online != null && online
         );
+    }
+
+    public void ensureOrderLocationColumns() {
+        logger.info("Ensuring order location columns exist...");
+        String[] columns = {"pickup_latitude", "pickup_longitude", "delivery_latitude", "delivery_longitude"};
+        for (String col : columns) {
+            try {
+                jdbcTemplate.execute("alter table orders add column " + col + " decimal(10,7)");
+                logger.info("Added column: {}", col);
+            } catch (Exception e) {
+                logger.debug("Column {} already exists or error: {}", col, e.getMessage());
+            }
+        }
+        logger.info("Order location columns ensured");
+    }
+
+    public void ensureDeliveryPartnerColumns() {
+        logger.info("Ensuring delivery partner columns exist...");
+        try {
+            jdbcTemplate.execute("alter table orders add column delivery_partner_id bigint");
+            logger.info("Added column: delivery_partner_id");
+        } catch (Exception e) {
+            logger.debug("Column delivery_partner_id already exists or error: {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute("alter table orders add column assigned_at datetime");
+            logger.info("Added column: assigned_at");
+        } catch (Exception e) {
+            logger.debug("Column assigned_at already exists or error: {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute("alter table orders add column delivered_at datetime");
+            logger.info("Added column: delivered_at");
+        } catch (Exception e) {
+            logger.debug("Column delivered_at already exists or error: {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute("alter table orders add column delivery_status varchar(50)");
+            logger.info("Added column: delivery_status");
+        } catch (Exception e) {
+            logger.debug("Column delivery_status already exists or error: {}", e.getMessage());
+        }
+        try {
+            jdbcTemplate.execute("alter table orders add column delivery_fee decimal(10,2)");
+            logger.info("Added column: delivery_fee");
+        } catch (Exception e) {
+            logger.debug("Column delivery_fee already exists or error: {}", e.getMessage());
+        }
+        logger.info("Delivery partner columns ensured");
     }
 
     public record DeliveryPartnerContext(

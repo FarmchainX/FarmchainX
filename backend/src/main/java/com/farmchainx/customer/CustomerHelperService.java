@@ -49,6 +49,26 @@ public class CustomerHelperService {
         }
     }
 
+    public void ensureCustomerAddressLocationColumns() {
+        try {
+            jdbcTemplate.execute("alter table customer_addresses add column if not exists latitude decimal(10,7)");
+            jdbcTemplate.execute("alter table customer_addresses add column if not exists longitude decimal(10,7)");
+        } catch (Exception ignored) {
+            // Keep startup resilient when table does not exist yet.
+        }
+    }
+
+    public void ensureOrderLocationColumns() {
+        try {
+            jdbcTemplate.execute("alter table orders add column if not exists pickup_latitude decimal(10,7)");
+            jdbcTemplate.execute("alter table orders add column if not exists pickup_longitude decimal(10,7)");
+            jdbcTemplate.execute("alter table orders add column if not exists delivery_latitude decimal(10,7)");
+            jdbcTemplate.execute("alter table orders add column if not exists delivery_longitude decimal(10,7)");
+        } catch (Exception ignored) {
+            // Keep startup resilient when table does not exist yet.
+        }
+    }
+
     public void ensureOrderPaymentColumn() {
         try {
             jdbcTemplate.execute("alter table orders add column if not exists payment_method_type varchar(40)");

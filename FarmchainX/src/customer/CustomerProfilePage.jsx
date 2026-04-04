@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import ConfirmDialog from '../components/ConfirmDialog';
+import LocationMapPicker from '../components/LocationMapPicker';
 import {
   CustomerEmptyState,
   CustomerInfoCard,
@@ -30,7 +31,7 @@ function CustomerProfilePage() {
   const [deleting, setDeleting] = useState(false);
 
   const [addressForm, setAddressForm] = useState({
-    label: '', recipientName: '', phone: '', addressLine: '', city: '', state: '', postalCode: '', isDefault: false,
+    label: '', recipientName: '', phone: '', addressLine: '', city: '', state: '', postalCode: '', latitude: null, longitude: null, isDefault: false,
   });
   const [paymentForm, setPaymentForm] = useState({ methodType: 'UPI', provider: '', accountRef: '', isDefault: false });
 
@@ -89,7 +90,7 @@ function CustomerProfilePage() {
     e.preventDefault();
     setMessage('');
     api.post('/api/customer/addresses', addressForm).then(() => {
-      setAddressForm({ label: '', recipientName: '', phone: '', addressLine: '', city: '', state: '', postalCode: '', isDefault: false });
+      setAddressForm({ label: '', recipientName: '', phone: '', addressLine: '', city: '', state: '', postalCode: '', latitude: null, longitude: null, isDefault: false });
       load();
       setMessage('Address added successfully.');
     }).catch((error) => setMessage(getApiMessage(error, 'Unable to add address.')));
@@ -122,6 +123,8 @@ function CustomerProfilePage() {
       city: address.city,
       state: address.state,
       postalCode: address.postalCode,
+      latitude: address.latitude,
+      longitude: address.longitude,
       isDefault: true,
     }).then(() => {
       load();
@@ -238,6 +241,14 @@ function CustomerProfilePage() {
                   <input required placeholder="Postal code" value={addressForm.postalCode} onChange={(e) => setAddressForm((p) => ({ ...p, postalCode: e.target.value }))} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-violet-300 focus:bg-white focus:ring-4 focus:ring-violet-100" />
                 </div>
                 <input required placeholder="Address line" value={addressForm.addressLine} onChange={(e) => setAddressForm((p) => ({ ...p, addressLine: e.target.value }))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-violet-300 focus:bg-white focus:ring-4 focus:ring-violet-100" />
+                <LocationMapPicker
+                  latitude={addressForm.latitude}
+                  longitude={addressForm.longitude}
+                  onChange={(latitude, longitude) => setAddressForm((p) => ({ ...p, latitude, longitude }))}
+                  title="Pin this delivery address on the map"
+                  subtitle="Click the map to drop a pin for the delivery location. The selected coordinates will be saved with the address."
+                  height="260px"
+                />
                 <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={addressForm.isDefault} onChange={(e) => setAddressForm((p) => ({ ...p, isDefault: e.target.checked }))} /> Set as default</label>
                 <CustomerPrimaryButton type="submit">Add address</CustomerPrimaryButton>
                 </div>
@@ -252,6 +263,7 @@ function CustomerProfilePage() {
                           <p className="text-sm font-semibold text-slate-950">{a.label} {isDefault && <span className="text-xs text-emerald-600">(Default)</span>}</p>
                           <p className="mt-1 text-sm text-slate-600">{a.addressLine}</p>
                           <p className="mt-1 text-xs text-slate-500">{a.city}, {a.state} • {a.postalCode}</p>
+                          {(a.latitude || a.longitude) && <p className="mt-1 text-[11px] text-slate-400">Pin: {a.latitude || '—'}, {a.longitude || '—'}</p>}
                         </div>
                         <div className="flex gap-3 text-xs font-semibold">
                           {!isDefault && <button type="button" onClick={() => setDefaultAddress(a)} className="text-violet-600 hover:text-violet-700">Set default</button>}

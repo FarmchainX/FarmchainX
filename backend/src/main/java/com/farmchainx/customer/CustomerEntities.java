@@ -17,6 +17,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 @Entity
@@ -74,6 +75,8 @@ class CustomerAddress {
     private String city;
     private String state;
     private String postalCode;
+    private BigDecimal latitude;
+    private BigDecimal longitude;
     private boolean isDefault;
 }
 

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.math.BigDecimal;
 
 @RestController
 @RequestMapping("/api/customer/addresses")
@@ -57,6 +58,8 @@ public class CustomerAddressController {
                 .city(request.getCity())
                 .state(request.getState())
                 .postalCode(request.getPostalCode())
+                .latitude(request.getLatitude())
+                .longitude(request.getLongitude())
                 .isDefault(request.isDefault)
                 .build();
 
@@ -86,6 +89,8 @@ public class CustomerAddressController {
         address.setCity(request.getCity());
         address.setState(request.getState());
         address.setPostalCode(request.getPostalCode());
+        address.setLatitude(request.getLatitude());
+        address.setLongitude(request.getLongitude());
         address.setDefault(request.isDefault);
 
         return ResponseEntity.ok(addressRepository.save(address));
@@ -134,6 +139,9 @@ public class CustomerAddressController {
 
         @NotBlank
         private String postalCode;
+
+        private BigDecimal latitude;
+        private BigDecimal longitude;
 
         private boolean isDefault;
     }

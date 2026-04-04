@@ -13,6 +13,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+
 @RestController
 @RequestMapping("/api/farmer/settings")
 @CrossOrigin(origins = "*")
@@ -37,6 +39,8 @@ public class FarmerSettingsController {
 
         dto.setFarmName(farmer.getFarmName());
         dto.setFarmLocation(farmer.getFarmLocation());
+        dto.setFarmLatitude(farmer.getFarmLatitude());
+        dto.setFarmLongitude(farmer.getFarmLongitude());
         dto.setFarmDescription(farmer.getFarmDescription());
 
         dto.setAccountHolderName(farmer.getAccountHolderName());
@@ -68,6 +72,8 @@ public class FarmerSettingsController {
         farmer.setDisplayName(request.getDisplayName());
         farmer.setFarmName(request.getFarmName());
         farmer.setFarmLocation(request.getFarmLocation());
+        farmer.setFarmLatitude(request.getFarmLatitude());
+        farmer.setFarmLongitude(request.getFarmLongitude());
         farmer.setFarmDescription(request.getFarmDescription());
 
         farmer.setAccountHolderName(request.getAccountHolderName());
@@ -114,6 +120,8 @@ public class FarmerSettingsController {
 
         private String farmName;
         private String farmLocation;
+        private BigDecimal farmLatitude;
+        private BigDecimal farmLongitude;
         private String farmDescription;
 
         private String accountHolderName;
@@ -139,6 +147,8 @@ public class FarmerSettingsController {
         private String displayName;
         private String farmName;
         private String farmLocation;
+        private BigDecimal farmLatitude;
+        private BigDecimal farmLongitude;
         private String farmDescription;
 
         private String accountHolderName;

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import ConfirmDialog from '../components/ConfirmDialog';
+import LocationMapPicker from '../components/LocationMapPicker';
 import { useTranslation } from '../hooks/useTranslation';
 
 function TabButton({ active, children, onClick }) {
@@ -97,6 +98,19 @@ function FarmSection({ values, onChange, onSubmit, onCancel, saving, t }) {
         <Field label={t('farmer.farmName')}><input className={inputCls} value={values.farmName || ''} onChange={(e) => onChange('farmName', e.target.value)} /></Field>
         <Field label={t('farmer.location')}><input className={inputCls} value={values.farmLocation || ''} onChange={(e) => onChange('farmLocation', e.target.value)} placeholder="City, State" /></Field>
         <div className="sm:col-span-2">
+          <LocationMapPicker
+            latitude={values.farmLatitude}
+            longitude={values.farmLongitude}
+            onChange={(latitude, longitude) => {
+              onChange('farmLatitude', latitude);
+              onChange('farmLongitude', longitude);
+            }}
+            title="Pin your farm location on the map"
+            subtitle="Click the map to mark the exact farm pickup point. Delivery partners will see this pin in their dashboard."
+            height="260px"
+          />
+        </div>
+        <div className="sm:col-span-2">
           <Field label={t('farmer.farmDescription')}>
             <textarea className={`${inputCls} h-20 resize-none`} value={values.farmDescription || ''} onChange={(e) => onChange('farmDescription', e.target.value)} />
           </Field>
@@ -188,6 +202,7 @@ function PreferencesSection({ values, onChange, onSubmit, onCancel, saving, t, c
 const defaultSettings = {
   fullName: '', email: '', phone: '', displayName: '',
   farmName: '', farmLocation: '', farmDescription: '',
+  farmLatitude: null, farmLongitude: null,
   accountHolderName: '', bankAccountNumber: '', bankIfsc: '', bankName: '',
   language: 'en-IN', timeZone: 'Asia/Kolkata',
   notifyOrderUpdates: true, notifyRiskAlerts: true,
@@ -244,9 +259,14 @@ function FarmerSettingsPage() {
   const handleSave = (e) => {
     e.preventDefault();
     setSaving(true);
+    // Ensure coordinates are numbers (BigDecimal in backend)
+    const farmLat = settings.farmLatitude !== null && settings.farmLatitude !== undefined ? Number(settings.farmLatitude) : null;
+    const farmLng = settings.farmLongitude !== null && settings.farmLongitude !== undefined ? Number(settings.farmLongitude) : null;
+    
     api.put('/api/farmer/settings', {
       fullName: settings.fullName, phone: settings.phone, displayName: settings.displayName,
       farmName: settings.farmName, farmLocation: settings.farmLocation, farmDescription: settings.farmDescription,
+      farmLatitude: farmLat, farmLongitude: farmLng,
       accountHolderName: settings.accountHolderName, bankAccountNumber: settings.bankAccountNumber,
       bankIfsc: settings.bankIfsc, bankName: settings.bankName,
       language: settings.language, timeZone: settings.timeZone,

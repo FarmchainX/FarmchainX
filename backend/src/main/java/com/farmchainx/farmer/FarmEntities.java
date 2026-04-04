@@ -30,6 +30,8 @@ class FarmerProfile {
 
     private String farmName;
     private String farmLocation;
+    private BigDecimal farmLatitude;
+    private BigDecimal farmLongitude;
     private String bankAccountNumber;
     private String bankIfsc;
     private String bankName;
