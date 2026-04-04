@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import farmchainxLogo from '../assets/farmchainx-logo.svg';
 import api from '../api/client';
 import ConfirmDialog from '../components/ConfirmDialog';
+import Chatbot from '../components/Chatbot';
+import { useFavorites } from '../hooks/useFavorites';
 
 const SEEN_NOTIFICATIONS_STORAGE_KEY = 'fcx_customer_seen_notifications';
 
@@ -29,6 +31,7 @@ const navItems = [
   { to: '/customer', label: 'Home', icon: '🏠', title: 'Fresh marketplace' },
   { to: '/customer/shop', label: 'Shop', icon: '🛍️', title: 'Discover products' },
   { to: '/customer/orders', label: 'My Orders', icon: '📦', title: 'Orders & tracking' },
+  { to: '/customer/favorites', label: 'Favorites', icon: '❤️', title: 'Saved products' },
   { to: '/customer/scan', label: 'Scan QR', icon: '🔎', title: 'Verify authenticity' },
   { to: '/customer/cart', label: 'Cart', icon: '🛒', title: 'Checkout summary' },
   { to: '/customer/profile', label: 'Profile', icon: '👤', title: 'Account & delivery info' },
@@ -52,6 +55,7 @@ const routeHeaderConfig = [
 function CustomerLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { count: favoritesCount } = useFavorites();
   const [showMenu, setShowMenu] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -253,6 +257,20 @@ function CustomerLayout() {
               )}
             </div>
 
+            <button
+              type="button"
+              onClick={() => navigate('/customer/favorites')}
+              className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-rose-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500"
+              title="View favorites"
+            >
+              <span className="text-lg">❤️</span>
+              {favoritesCount > 0 && (
+                <span className="absolute right-2 top-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-semibold text-white">
+                  {favoritesCount > 9 ? '9+' : favoritesCount}
+                </span>
+              )}
+            </button>
+
             <div className="relative">
               <button
                 type="button"
@@ -345,6 +363,7 @@ function CustomerLayout() {
         onCancel={() => setShowLogoutConfirm(false)}
         onConfirm={logout}
       />
+      <Chatbot role="CUSTOMER" />
     </div>
   );
 }

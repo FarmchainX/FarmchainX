@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import farmchainxLogo from '../assets/farmchainx-logo.svg';
 import ConfirmDialog from '../components/ConfirmDialog';
+import Chatbot from '../components/Chatbot';
 
 const navItems = [
   { to: '/delivery', label: 'Dashboard', icon: 'dashboard' },
@@ -221,6 +222,7 @@ function DeliveryLayout() {
         onCancel={() => setShowLogoutConfirm(false)}
         onConfirm={confirmLogout}
       />
+      <Chatbot role="DELIVERY" />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import farmchainxLogo from '../assets/farmchainx-logo.svg';
 import ConfirmDialog from '../components/ConfirmDialog';
+import Chatbot from '../components/Chatbot';
 import api from '../api/client';
 import { useTranslation } from '../hooks/useTranslation';
 
@@ -381,6 +382,7 @@ function FarmerLayout() {
         onCancel={() => setShowLogoutConfirm(false)}
         onConfirm={handleLogout}
       />
+      <Chatbot role="FARMER" />
     </div>
   );
 }
