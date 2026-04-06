@@ -12,27 +12,6 @@ import {
 } from './CustomerUI';
 import { formatInr } from '../utils/currency';
 
-const RAZORPAY_SCRIPT_URL = 'https://checkout.razorpay.com/v1/checkout.js';
-
-function ensureRazorpayScript() {
-  if (window.Razorpay) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const existing = document.querySelector(`script[src="${RAZORPAY_SCRIPT_URL}"]`);
-    if (existing) {
-      existing.addEventListener('load', () => resolve(true), { once: true });
-      existing.addEventListener('error', () => resolve(false), { once: true });
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = RAZORPAY_SCRIPT_URL;
-    script.async = true;
-    script.onload = () => resolve(true);
-    script.onerror = () => resolve(false);
-    document.body.appendChild(script);
-  });
-}
-
 function CustomerCartPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
@@ -91,7 +70,7 @@ function CustomerCartPage() {
     setCheckoutState('creating');
 
     try {
-      const checkoutRes = await api.post('/api/customer/orders/checkout', {
+      const checkoutRes = await api.post('/api/customer/orders', {
         addressId: Number(addressId),
         paymentMethodId: Number(resolvedPaymentMethodId),
         expectedItems: items.length,
@@ -99,79 +78,27 @@ function CustomerCartPage() {
 
       const checkout = checkoutRes.data || {};
       const orderIds = Array.isArray(checkout.orderIds) ? checkout.orderIds : [];
-      if (!orderIds.length || !checkout.razorpayOrderId || !checkout.razorpayKeyId) {
+
+      if (orderIds.length) {
         setCheckoutState('idle');
-        setMessage('Unable to start payment. Please try again.');
-        return;
-      }
-
-      const scriptReady = await ensureRazorpayScript();
-      if (!scriptReady || !window.Razorpay) {
-        setCheckoutState('idle');
-        setMessage('Payment service could not be loaded. Check your network and try again.');
-        return;
-      }
-
-      setCheckoutState('paying');
-
-      const options = {
-        key: checkout.razorpayKeyId,
-        amount: Number(checkout.amountPaise || 0),
-        currency: checkout.currency || 'INR',
-        name: 'FarmchainX',
-        description: 'Secure checkout',
-        order_id: checkout.razorpayOrderId,
-        prefill: {
-          name: localStorage.getItem('fcx_fullName') || '',
-          email: '',
-          contact: '',
-        },
-        theme: {
-          color: '#7c3aed',
-        },
-        handler: async (response) => {
-          try {
-            setCheckoutState('verifying');
-            await api.post('/api/customer/orders/verify-payment', {
-              orderIds,
-              razorpayOrderId: response.razorpay_order_id,
-              razorpayPaymentId: response.razorpay_payment_id,
-              razorpaySignature: response.razorpay_signature,
-            });
-
-            navigate('/customer/order-success', {
-              state: {
-                orderIds,
-                itemCount: Number(checkout.itemCount || items.length),
-                totalAmount: Number(checkout.totalAmount || total),
-                message: 'Payment successful and order placed.',
-                paymentStatus: 'Paid',
-                paymentTxnId: response.razorpay_payment_id,
-                addressLabel: selectedAddress ? `${selectedAddress.label} - ${selectedAddress.city}` : '',
-                paymentMethodLabel: 'Razorpay',
-                placedAt: new Date().toISOString(),
-              },
-            });
-          } catch (verifyErr) {
-            setCheckoutState('idle');
-            setMessage(verifyErr?.response?.data?.message || 'Payment verification failed. Please contact support with your transaction ID.');
-          }
-        },
-        modal: {
-          ondismiss: () => {
-            setCheckoutState('idle');
-            setMessage('Payment was cancelled. You can try again anytime.');
+        navigate('/customer/order-success', {
+          state: {
+            orderIds,
+            itemCount: Number(checkout.itemCount || items.length),
+            totalAmount: Number(checkout.totalAmount || total),
+            message: checkout.message || 'Order placed successfully.',
+            paymentStatus: checkout.paymentStatus || 'Pending',
+            paymentTxnId: '',
+            addressLabel: selectedAddress ? `${selectedAddress.label} - ${selectedAddress.city}` : '',
+            paymentMethodLabel: 'Direct order',
+            placedAt: new Date().toISOString(),
           },
-        },
-      };
+        });
+        return;
+      }
 
-      const rz = new window.Razorpay(options);
-      rz.on('payment.failed', (failure) => {
-        setCheckoutState('idle');
-        const reason = failure?.error?.description || 'Payment failed. Please try again.';
-        setMessage(reason);
-      });
-      rz.open();
+      setCheckoutState('idle');
+      setMessage(checkout?.message || 'Unable to place order right now.');
     } catch (err) {
       setCheckoutState('idle');
       if (err?.response?.status === 403) {
@@ -184,10 +111,10 @@ function CustomerCartPage() {
 
   const checkoutBusy = checkoutState !== 'idle';
   const checkoutLabelByState = {
-    idle: 'Pay & Place Order',
-    creating: 'Preparing checkout...',
-    paying: 'Opening payment gateway...',
-    verifying: 'Verifying payment...',
+    idle: `Pay ${formatInr(total)} & Place Order`,
+    creating: 'Placing order...',
+    paying: 'Placing order...',
+    verifying: 'Placing order...',
   };
 
   const selectedAddress = addresses.find((a) => String(a.id) === addressId);
@@ -272,15 +199,15 @@ function CustomerCartPage() {
                 )}
               </div>
 
-              {/* Step 2: Fixed Payment Gateway */}
+              {/* Step 2: Temporary direct order mode */}
               <div className="group rounded-2xl border-2 border-slate-200 bg-white p-5 transition-all hover:border-emerald-300 hover:shadow-md">
                 <div className="mb-3 flex items-center gap-3">
                   <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-lg font-bold text-emerald-600">💳</div>
                   <label className="text-xs font-bold uppercase tracking-widest text-slate-600">Step 2: Secure Payment</label>
                 </div>
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                  <p className="font-semibold">Razorpay Payment Gateway</p>
-                  <p className="mt-1 text-xs text-emerald-700">After clicking Pay, you will continue directly in Razorpay popup.</p>
+                  <p className="font-semibold">Direct Order Placement</p>
+                  <p className="mt-1 text-xs text-emerald-700">After clicking Pay, your order will be placed immediately.</p>
                 </div>
               </div>
 
@@ -305,7 +232,7 @@ function CustomerCartPage() {
                 <div className="text-xs">
                   <p className="font-bold text-blue-900">Bank-Level Security</p>
                   <p className="text-blue-700">PCI DSS Compliant • Encrypted with 256-bit SSL</p>
-                  <p className="mt-1 font-semibold text-blue-800">Powered by Razorpay</p>
+                  <p className="mt-1 font-semibold text-blue-800">Gateway mode temporarily disabled</p>
                 </div>
               </div>
 
@@ -322,12 +249,7 @@ function CustomerCartPage() {
               >
                 <div className="flex items-center justify-center gap-3">
                   {checkoutBusy && <span className="inline-block animate-spin text-lg">⏳</span>}
-                  <span className="text-base">
-                    {checkoutState === 'idle' && `Pay ${formatInr(total)} & Place Order`}
-                    {checkoutState === 'creating' && 'Preparing checkout...'}
-                    {checkoutState === 'paying' && 'Opening payment gateway...'}
-                    {checkoutState === 'verifying' && 'Verifying payment...'}
-                  </span>
+                  <span className="text-base">{checkoutLabelByState[checkoutState] || checkoutLabelByState.idle}</span>
                 </div>
               </button>
             </div>
@@ -389,8 +311,8 @@ function CustomerCartPage() {
                   <span className="text-2xl">💳</span>
                   <div className="flex-1">
                     <p className="text-xs font-bold uppercase text-emerald-600">Payment Via</p>
-                    <p className="mt-2 text-sm font-semibold text-emerald-900">Razorpay</p>
-                    <p className="text-xs text-emerald-700">Secure online gateway</p>
+                    <p className="mt-2 text-sm font-semibold text-emerald-900">Direct order mode</p>
+                    <p className="text-xs text-emerald-700">Online gateway temporarily disabled</p>
                   </div>
                 </div>
               </div>

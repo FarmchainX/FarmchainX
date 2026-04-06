@@ -43,6 +43,8 @@ import org.springframework.web.client.HttpStatusCodeException;
 @CrossOrigin(origins = "*")
 public class CustomerOrderController {
 
+    private static final BigDecimal DELIVERY_RATE_PER_KM = new BigDecimal("12.00");
+
     private final CustomerHelperService helperService;
     private final CustomerCartItemRepository cartItemRepository;
     private final CustomerAddressRepository addressRepository;
@@ -79,6 +81,7 @@ public class CustomerOrderController {
     public void initializeColumns() {
         helperService.ensureOrderOwnershipColumn();
         helperService.ensureOrderAddressColumn();
+        helperService.ensureOrderLocationColumns();
         helperService.ensureOrderPaymentColumn();
         helperService.ensureOrderRazorpayOrderIdColumn();
         helperService.ensureOrderRazorpayPaymentIdColumn();
@@ -111,12 +114,6 @@ public class CustomerOrderController {
             Authentication authentication,
             @Valid @RequestBody PlaceOrderRequest request
     ) {
-        if (!razorpayEnabled || isBlank(razorpayKeyId) || isBlank(razorpayKeySecret)) {
-            return ResponseEntity.status(503).body(Map.of(
-                    "message", "Online payments are currently unavailable. Please try again later."
-            ));
-        }
-
         CheckoutBundle checkoutBundle;
         try {
             checkoutBundle = buildCheckoutBundle(authentication, request);
@@ -125,53 +122,17 @@ public class CustomerOrderController {
         } catch (IllegalStateException ex) {
             return ResponseEntity.badRequest().body(Map.of("message", ex.getMessage()));
         }
-        if (checkoutBundle.totalAmount().compareTo(BigDecimal.ZERO) <= 0) {
-            return ResponseEntity.badRequest().body(Map.of(
-                    "message", "Invalid order amount for checkout."
-            ));
-        }
-
-        long amountPaise = checkoutBundle.totalAmount().multiply(new BigDecimal("100")).longValue();
-        String receipt = "fcx-" + checkoutBundle.orderIds().get(0) + "-" + System.currentTimeMillis();
-
-        Map<String, Object> razorpayOrder;
-        try {
-            razorpayOrder = createRazorpayOrder(amountPaise, receipt, checkoutBundle.orderIds());
-        } catch (IllegalStateException ex) {
-            return ResponseEntity.status(502).body(Map.of(
-                    "message", sanitizeGatewayErrorMessage(ex.getMessage())
-            ));
-        } catch (Exception ex) {
-            return ResponseEntity.status(502).body(Map.of(
-                    "message", "Unable to initialize payment gateway order."
-            ));
-        }
-        Object razorpayOrderId = razorpayOrder.get("id");
-        if (!(razorpayOrderId instanceof String orderId) || isBlank(orderId)) {
-            return ResponseEntity.status(502).body(Map.of(
-                    "message", "Unable to initialize payment gateway order."
-            ));
-        }
-
-        for (Long id : checkoutBundle.orderIds()) {
-            jdbcTemplate.update(
-                    "update orders set razorpay_order_id = ?, payment_status = 'Created' where id = ?",
-                    orderId,
-                    id
-            );
-        }
 
         return ResponseEntity.ok(Map.of(
                 "orderIds", checkoutBundle.orderIds(),
                 "itemCount", checkoutBundle.itemCount(),
                 "totalAmount", checkoutBundle.totalAmount(),
                 "message", checkoutBundle.message(),
-                "razorpayOrderId", orderId,
-                "razorpayKeyId", razorpayKeyId,
-                "amountPaise", amountPaise,
-                "currency", "INR"
+                "paymentStatus", "Pending",
+                "paymentMode", "DIRECT"
         ));
     }
+
 
     @GetMapping("/checkout-config-status")
     public ResponseEntity<Map<String, Object>> checkoutConfigStatus() {
@@ -273,9 +234,10 @@ public class CustomerOrderController {
             List<Map<String, Object>> productRows = jdbcTemplate.queryForList(
                     """
                     select p.id, p.price_per_unit as pricePerUnit, p.unit, p.stock_quantity as stockQuantity,
-                           b.farmer_id as farmerId
+                           b.farmer_id as farmerId, fp.farm_latitude as farmerLatitude, fp.farm_longitude as farmerLongitude
                     from products p
                     join batches b on p.batch_id = b.id
+                    join farmer_profiles fp on b.farmer_id = fp.id
                     where p.id = ?
                     """,
                     item.getProductId()
@@ -300,7 +262,15 @@ public class CustomerOrderController {
             BigDecimal amount = price.multiply(BigDecimal.valueOf(item.getQuantity())).setScale(2, RoundingMode.HALF_UP);
             checkoutTotal = checkoutTotal.add(amount);
             BigDecimal distance = new BigDecimal("6.00");
-            BigDecimal fee = amount.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal fee = distance
+                    .max(BigDecimal.ONE)
+                    .multiply(DELIVERY_RATE_PER_KM)
+                    .setScale(2, RoundingMode.HALF_UP);
+
+            BigDecimal pickupLatitude = toNullableDecimal(product.get("farmerLatitude"));
+            BigDecimal pickupLongitude = toNullableDecimal(product.get("farmerLongitude"));
+            BigDecimal deliveryLatitude = address.getLatitude();
+            BigDecimal deliveryLongitude = address.getLongitude();
 
             String orderCode = "#ORD" + UUID.randomUUID().toString().substring(0, 6).toUpperCase();
             OffsetDateTime now = OffsetDateTime.now();
@@ -310,8 +280,9 @@ public class CustomerOrderController {
                     insert into orders (
                         order_code, farmer_id, product_id, customer_user_id, customer_name, customer_phone,
                         customer_address_id, quantity, quantity_unit, order_amount, distance_km, delivery_fee,
+                        pickup_latitude, pickup_longitude, delivery_latitude, delivery_longitude,
                         status, delivery_status, payment_status, payment_method_type, pickup_location, delivery_address, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     orderCode,
                     ((Number) product.get("farmerId")).longValue(),
@@ -325,6 +296,10 @@ public class CustomerOrderController {
                     amount,
                     distance,
                     fee,
+                    pickupLatitude,
+                    pickupLongitude,
+                    deliveryLatitude,
+                    deliveryLongitude,
                     "Pending",
                     "",
                     "Pending",
@@ -510,6 +485,13 @@ public class CustomerOrderController {
         if (value instanceof BigDecimal decimal) return decimal;
         if (value instanceof Number number) return BigDecimal.valueOf(number.doubleValue()).setScale(2, RoundingMode.HALF_UP);
         return BigDecimal.ZERO;
+    }
+
+    private BigDecimal toNullableDecimal(Object value) {
+        if (value == null) return null;
+        if (value instanceof BigDecimal decimal) return decimal;
+        if (value instanceof Number number) return BigDecimal.valueOf(number.doubleValue()).setScale(7, RoundingMode.HALF_UP);
+        return null;
     }
 
     @GetMapping

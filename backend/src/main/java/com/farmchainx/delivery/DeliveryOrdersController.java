@@ -1,5 +1,6 @@
 package com.farmchainx.delivery;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
@@ -30,8 +31,16 @@ import java.util.Map;
 @PreAuthorize("hasRole('DELIVERY_PARTNER')")
 public class DeliveryOrdersController {
 
+    private static final BigDecimal DELIVERY_RATE_PER_KM = new BigDecimal("12.00");
+
     private final DeliveryHelperService helperService;
     private final JdbcTemplate jdbcTemplate;
+
+    @PostConstruct
+    public void initializeColumns() {
+        helperService.ensureOrderLocationColumns();
+        helperService.ensureDeliveryPartnerColumns();
+    }
 
     @GetMapping("/available")
     public ResponseEntity<List<Map<String, Object>>> getAvailableDeliveries(Authentication authentication) {
@@ -41,7 +50,7 @@ public class DeliveryOrdersController {
                 select o.id, o.order_code as orderCode, o.customer_name as customerName, o.customer_phone as customerPhone,
                        o.quantity, o.quantity_unit as quantityUnit, o.pickup_location as pickupLocation,
                        o.delivery_address as deliveryAddress, o.distance_km as distanceKm,
-                       coalesce(o.delivery_fee, round(coalesce(o.order_amount, 0) * 0.08, 2), 50) as earning,
+                       coalesce(o.delivery_fee, round(greatest(coalesce(o.distance_km, 0), 1) * ?, 2)) as earning,
                        fp.farm_name as farmName, u.phone as farmerPhone
                 from orders o
                 join farmer_profiles fp on o.farmer_id = fp.id
@@ -50,7 +59,8 @@ public class DeliveryOrdersController {
                   and (o.delivery_status is null or o.delivery_status = '')
                   and o.status in ('Pending', 'Shipped', 'Confirmed')
                 order by o.created_at desc
-                """
+                """,
+                DELIVERY_RATE_PER_KM
         );
         return ResponseEntity.ok(rows);
     }
@@ -143,12 +153,13 @@ public class DeliveryOrdersController {
                        o.quantity, o.quantity_unit as quantityUnit, o.distance_km as distanceKm,
                        o.delivery_status as deliveryStatus, o.status as orderStatus,
                        fp.farm_name as farmName, u.phone as farmerPhone, u.full_name as farmerName,
-                       coalesce(o.delivery_fee, round(coalesce(o.order_amount, 0) * 0.08, 2), 50) as earning
+                       coalesce(o.delivery_fee, round(greatest(coalesce(o.distance_km, 0), 1) * ?, 2)) as earning
                 from orders o
                 join farmer_profiles fp on o.farmer_id = fp.id
                 join users u on fp.user_id = u.id
                 where o.id = ? and o.delivery_partner_id = ?
                 """,
+                DELIVERY_RATE_PER_KM,
                 id,
                 partner.profileId()
         );
@@ -209,10 +220,11 @@ public class DeliveryOrdersController {
                     """
                     update orders
                     set delivery_status = 'DELIVERED', delivered_at = ?, status = 'Completed', payment_status = 'Paid',
-                        delivery_fee = coalesce(delivery_fee, round(coalesce(order_amount, 0) * 0.08, 2), 50)
+                        delivery_fee = coalesce(delivery_fee, round(greatest(coalesce(distance_km, 0), 1) * ?, 2))
                     where id = ? and delivery_partner_id = ?
                     """,
                     Timestamp.from(now.toInstant()),
+                    DELIVERY_RATE_PER_KM,
                     id,
                     partner.profileId()
             );
@@ -245,11 +257,12 @@ public class DeliveryOrdersController {
                 """
                 select o.id, o.order_code as orderCode, o.customer_name as customerName,
                        o.delivery_address as deliveryAddress, o.delivered_at as deliveredAt,
-                       coalesce(o.delivery_fee, round(coalesce(o.order_amount, 0) * 0.08, 2), 50) as earning
+                       coalesce(o.delivery_fee, round(greatest(coalesce(o.distance_km, 0), 1) * ?, 2)) as earning
                 from orders o
                 where o.delivery_partner_id = ? and o.delivery_status = 'DELIVERED'
                 order by o.delivered_at desc
                 """,
+                DELIVERY_RATE_PER_KM,
                 partner.profileId()
         );
         return ResponseEntity.ok(rows);

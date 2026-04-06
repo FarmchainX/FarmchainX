@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { useFavorites } from '../hooks/useFavorites';
 import {
   CustomerEmptyState,
   CustomerMetricCard,
@@ -10,6 +11,7 @@ import {
 } from './CustomerUI';
 
 function CustomerShopPage() {
+  const { isFavorite, toggleFavorite } = useFavorites();
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
@@ -79,7 +81,14 @@ function CustomerShopPage() {
         ) : (
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3">
             {products.map((product) => (
-              <CustomerProductCard key={product.id} product={product} to={`/customer/shop/${product.id}`} />
+              <CustomerProductCard
+                key={product.id}
+                product={product}
+                to={`/customer/shop/${product.id}`}
+                showFavorite
+                isFavorite={isFavorite(product.id)}
+                onToggleFavorite={toggleFavorite}
+              />
             ))}
           </div>
         )}

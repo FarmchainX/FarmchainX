@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
+import { useFavorites } from '../hooks/useFavorites';
 import {
   CustomerInfoCard,
   CustomerMetricCard,
@@ -14,6 +15,8 @@ import { formatInr } from '../utils/currency';
 
 function CustomerProductDetailsPage() {
   const { id } = useParams();
+  const productId = Number(id);
+  const { isFavorite, toggleFavorite } = useFavorites();
   const [product, setProduct] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [quantity, setQuantity] = useState(1);
@@ -38,6 +41,11 @@ function CustomerProductDetailsPage() {
     }).catch(() => {
       setMessage('Unable to add this product right now.');
     });
+  };
+
+  const handleToggleFavorite = () => {
+    if (!product) return;
+    toggleFavorite(product);
   };
 
   const submitReview = (e) => {
@@ -70,7 +78,20 @@ function CustomerProductDetailsPage() {
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_420px]">
         <CustomerInfoCard className="overflow-hidden p-0">
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)]">
-            <div className="bg-[linear-gradient(135deg,#f1fff5_0%,#fff9ef_100%)] p-5 lg:p-6">
+            <div className="relative bg-[linear-gradient(135deg,#f1fff5_0%,#fff9ef_100%)] p-5 lg:p-6">
+              <button
+                type="button"
+                onClick={handleToggleFavorite}
+                className={`absolute right-8 top-8 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border shadow-sm transition ${
+                  isFavorite(productId)
+                    ? 'border-rose-300 bg-rose-50 text-rose-600 hover:bg-rose-100'
+                    : 'border-slate-200 bg-white text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500'
+                }`}
+                title={isFavorite(productId) ? 'Remove from favorites' : 'Add to favorites'}
+                aria-label={isFavorite(productId) ? 'Remove from favorites' : 'Add to favorites'}
+              >
+                <span className="text-xl">{isFavorite(productId) ? '❤️' : '🤍'}</span>
+              </button>
               {product.imageUrl ? (
                 <img src={product.imageUrl} alt={product.name} className="h-[420px] w-full rounded-[28px] object-cover shadow-sm" />
               ) : (

@@ -25,6 +25,8 @@ import java.util.Map;
 @PreAuthorize("hasRole('DELIVERY_PARTNER')")
 public class DeliveryEarningsController {
 
+    private static final BigDecimal DELIVERY_RATE_PER_KM = new BigDecimal("8.00");
+
     private final DeliveryHelperService helperService;
     private final JdbcTemplate jdbcTemplate;
 
@@ -52,11 +54,12 @@ public class DeliveryEarningsController {
                 """
                 select o.id, o.order_code as orderCode, o.customer_name as customerName,
                        o.delivered_at as deliveredAt,
-                       coalesce(o.delivery_fee, round(coalesce(o.order_amount, 0) * 0.08, 2), 50) as amount
+                       coalesce(o.delivery_fee, round(greatest(coalesce(o.distance_km, 0), 1) * ?, 2)) as amount
                 from orders o
                 where o.delivery_partner_id = ? and o.delivery_status = 'DELIVERED'
                 order by o.delivered_at desc
                 """,
+                DELIVERY_RATE_PER_KM,
                 partner.profileId()
         );
         return ResponseEntity.ok(rows);
@@ -65,11 +68,12 @@ public class DeliveryEarningsController {
     private BigDecimal sumBetween(Long profileId, OffsetDateTime from, OffsetDateTime to) {
         BigDecimal value = jdbcTemplate.queryForObject(
                 """
-                select coalesce(sum(coalesce(delivery_fee, round(coalesce(order_amount, 0) * 0.08, 2), 50)), 0)
+                select coalesce(sum(coalesce(delivery_fee, round(greatest(coalesce(distance_km, 0), 1) * ?, 2))), 0)
                 from orders
                 where delivery_partner_id = ? and delivery_status = 'DELIVERED' and delivered_at between ? and ?
                 """,
                 BigDecimal.class,
+                DELIVERY_RATE_PER_KM,
                 profileId,
                 Timestamp.from(from.toInstant()),
                 Timestamp.from(to.toInstant())
@@ -80,11 +84,12 @@ public class DeliveryEarningsController {
     private BigDecimal sumTotal(Long profileId) {
         BigDecimal value = jdbcTemplate.queryForObject(
                 """
-                select coalesce(sum(coalesce(delivery_fee, round(coalesce(order_amount, 0) * 0.08, 2), 50)), 0)
+                select coalesce(sum(coalesce(delivery_fee, round(greatest(coalesce(distance_km, 0), 1) * ?, 2))), 0)
                 from orders
                 where delivery_partner_id = ? and delivery_status = 'DELIVERED'
                 """,
                 BigDecimal.class,
+                DELIVERY_RATE_PER_KM,
                 profileId
         );
         return value == null ? BigDecimal.ZERO : value;

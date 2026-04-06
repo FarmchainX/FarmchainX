@@ -26,6 +26,7 @@ import CustomerLayout from './customer/CustomerLayout';
 import CustomerHomePage from './customer/CustomerHomePage';
 import CustomerShopPage from './customer/CustomerShopPage';
 import CustomerProductDetailsPage from './customer/CustomerProductDetailsPage';
+import CustomerFavoritesPage from './customer/CustomerFavoritesPage';
 import CustomerOrdersPage from './customer/CustomerOrdersPage';
 import CustomerScanQrPage from './customer/CustomerScanQrPage';
 import CustomerCartPage from './customer/CustomerCartPage';
@@ -76,6 +77,7 @@ function App() {
         <Route index element={<CustomerHomePage />} />
         <Route path="shop" element={<CustomerShopPage />} />
         <Route path="shop/:id" element={<CustomerProductDetailsPage />} />
+        <Route path="favorites" element={<CustomerFavoritesPage />} />
         <Route path="orders" element={<CustomerOrdersPage />} />
         <Route path="scan" element={<CustomerScanQrPage />} />
         <Route path="cart" element={<CustomerCartPage />} />

@@ -160,14 +160,42 @@ export function CustomerSecondaryButton({ children, className = '', to, ...props
   );
 }
 
-export function CustomerProductCard({ product, to, compact = false }) {
+export function CustomerProductCard({
+  product,
+  to,
+  compact = false,
+  showFavorite = false,
+  isFavorite = false,
+  onToggleFavorite,
+}) {
   const aiScore = Math.max(82, Math.min(99, Math.round(Number(product?.avgRating || 4) * 20 + 10)));
+
+  const handleFavoriteClick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onToggleFavorite?.(product);
+  };
 
   return (
     <Link
       to={to}
-      className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
+      {showFavorite && (
+        <button
+          type="button"
+          onClick={handleFavoriteClick}
+          className={`absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition ${
+            isFavorite
+              ? 'border-rose-300 bg-rose-50 text-rose-600 hover:bg-rose-100'
+              : 'border-slate-200 bg-white text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500'
+          }`}
+          title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+          aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          <span className="text-base">{isFavorite ? '❤️' : '🤍'}</span>
+        </button>
+      )}
       <div className={`${compact ? 'h-44' : 'h-56'} overflow-hidden bg-slate-100`}>
         {product?.imageUrl ? (
           <img src={product.imageUrl} alt={product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
