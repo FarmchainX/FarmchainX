@@ -12,6 +12,30 @@ import {
   CustomerSectionHeader,
 } from './CustomerUI';
 
+const reverseGeocodeLocation = async (latitude, longitude) => {
+  const response = await fetch(
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}`,
+    { headers: { Accept: 'application/json' } },
+  );
+
+  if (!response.ok) {
+    return {
+      addressLine: `Selected pin: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+      city: '',
+      state: '',
+      postalCode: '',
+    };
+  }
+
+  const data = await response.json();
+  return {
+    addressLine: data?.display_name || `Selected pin: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+    city: data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.hamlet || '',
+    state: data?.address?.state || '',
+    postalCode: data?.address?.postcode || '',
+  };
+};
+
 function CustomerProfilePage() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState({
@@ -29,6 +53,7 @@ function CustomerProfilePage() {
   const [message, setMessage] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [resolvingAddress, setResolvingAddress] = useState(false);
 
   const [addressForm, setAddressForm] = useState({
     label: '', recipientName: '', phone: '', addressLine: '', city: '', state: '', postalCode: '', latitude: null, longitude: null, isDefault: false,
@@ -88,6 +113,10 @@ function CustomerProfilePage() {
 
   const addAddress = (e) => {
     e.preventDefault();
+    if (resolvingAddress) {
+      setMessage('Please wait for the address to finish loading from the map pin.');
+      return;
+    }
     setMessage('');
     api.post('/api/customer/addresses', addressForm).then(() => {
       setAddressForm({ label: '', recipientName: '', phone: '', addressLine: '', city: '', state: '', postalCode: '', latitude: null, longitude: null, isDefault: false });
@@ -244,13 +273,36 @@ function CustomerProfilePage() {
                 <LocationMapPicker
                   latitude={addressForm.latitude}
                   longitude={addressForm.longitude}
-                  onChange={(latitude, longitude) => setAddressForm((p) => ({ ...p, latitude, longitude }))}
+                  onChange={async (latitude, longitude) => {
+                    setResolvingAddress(true);
+                    setAddressForm((p) => ({ ...p, latitude, longitude }));
+                    try {
+                      const resolvedAddress = await reverseGeocodeLocation(latitude, longitude);
+                      setAddressForm((p) => ({
+                        ...p,
+                        addressLine: resolvedAddress.addressLine,
+                        city: resolvedAddress.city || p.city,
+                        state: resolvedAddress.state || p.state,
+                        postalCode: resolvedAddress.postalCode || p.postalCode,
+                      }));
+                    } catch {
+                      setAddressForm((p) => ({
+                        ...p,
+                        addressLine: `Selected pin: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+                      }));
+                    } finally {
+                      setResolvingAddress(false);
+                    }
+                  }}
                   title="Pin this delivery address on the map"
-                  subtitle="Click the map to drop a pin for the delivery location. The selected coordinates will be saved with the address."
+                  subtitle="Click the map to drop a pin for the delivery location. The address line will autofill from the selected pin."
                   height="260px"
                 />
+                <p className="text-xs text-slate-500">
+                  {resolvingAddress ? 'Looking up address from map pin...' : 'The address field is filled from the selected pin and can still be edited.'}
+                </p>
                 <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={addressForm.isDefault} onChange={(e) => setAddressForm((p) => ({ ...p, isDefault: e.target.checked }))} /> Set as default</label>
-                <CustomerPrimaryButton type="submit">Add address</CustomerPrimaryButton>
+                <CustomerPrimaryButton type="submit" disabled={resolvingAddress}>Add address</CustomerPrimaryButton>
                 </div>
 
                 <div className="mt-5 space-y-3">

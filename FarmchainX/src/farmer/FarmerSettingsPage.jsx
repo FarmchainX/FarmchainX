@@ -25,16 +25,16 @@ function Toast({ message, type }) {
   );
 }
 
-function SectionActions({ saving, onCancel, t }) {
+function SectionActions({ saving, onCancel, t, disabled = false }) {
   return (
     <div className="mt-6 flex gap-3 justify-end">
       <button type="button" onClick={onCancel}
         className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
         {t('common.cancel')}
       </button>
-      <button type="submit" disabled={saving}
+      <button type="submit" disabled={saving || disabled}
         className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
-        {saving ? t('farmer.saving') : t('farmer.saveChanges')}
+        {saving ? t('farmer.saving') : disabled ? t('farmer.resolvingAddress', { defaultValue: 'Looking up address...' }) : t('farmer.saveChanges')}
       </button>
     </div>
   );
@@ -45,6 +45,20 @@ function Field({ label, children }) {
 }
 
 const inputCls = 'w-full rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm';
+
+const reverseGeocodeLocation = async (latitude, longitude) => {
+  const response = await fetch(
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}`,
+    { headers: { Accept: 'application/json' } },
+  );
+
+  if (!response.ok) {
+    return `Selected pin: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+  }
+
+  const data = await response.json();
+  return data?.display_name || `Selected pin: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+};
 
 function ProfileSection({ values, onChange, onSubmit, onCancel, saving, onImageChange, t }) {
   return (
@@ -90,7 +104,7 @@ function ProfileSection({ values, onChange, onSubmit, onCancel, saving, onImageC
   );
 }
 
-function FarmSection({ values, onChange, onSubmit, onCancel, saving, t }) {
+function FarmSection({ values, onChange, onSubmit, onCancel, saving, resolvingLocation, setResolvingLocation, t }) {
   return (
     <form onSubmit={onSubmit} className="p-5 grid grid-cols-1 md:grid-cols-3 gap-5 text-sm">
       <div><p className="text-sm font-semibold text-slate-900">{t('farmer.farmInformation')}</p><p className="text-xs text-slate-500 mt-1">{t('farmer.shownToCustomers')}</p></div>
@@ -101,14 +115,28 @@ function FarmSection({ values, onChange, onSubmit, onCancel, saving, t }) {
           <LocationMapPicker
             latitude={values.farmLatitude}
             longitude={values.farmLongitude}
-            onChange={(latitude, longitude) => {
+            onChange={async (latitude, longitude) => {
+              setResolvingLocation(true);
               onChange('farmLatitude', latitude);
               onChange('farmLongitude', longitude);
+              try {
+                const resolvedLocation = await reverseGeocodeLocation(latitude, longitude);
+                onChange('farmLocation', resolvedLocation);
+              } catch {
+                onChange('farmLocation', `Selected pin: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+              } finally {
+                setResolvingLocation(false);
+              }
             }}
             title="Pin your farm location on the map"
             subtitle="Click the map to mark the exact farm pickup point. Delivery partners will see this pin in their dashboard."
             height="260px"
           />
+          <p className="mt-2 text-xs text-slate-500">
+            {resolvingLocation
+              ? t('farmer.resolvingAddress', { defaultValue: 'Looking up address from map pin...' })
+              : t('farmer.addressAutofillHint', { defaultValue: 'The location field will fill from the selected pin and remain editable.' })}
+          </p>
         </div>
         <div className="sm:col-span-2">
           <Field label={t('farmer.farmDescription')}>
@@ -116,7 +144,7 @@ function FarmSection({ values, onChange, onSubmit, onCancel, saving, t }) {
           </Field>
         </div>
       </div>
-      <SectionActions saving={saving} onCancel={onCancel} t={t} />
+      <SectionActions saving={saving} onCancel={onCancel} t={t} disabled={resolvingLocation} />
     </form>
   );
 }
@@ -220,6 +248,7 @@ function FarmerSettingsPage() {
   const [settings, setSettings] = useState(defaultSettings);
   const [original, setOriginal] = useState(defaultSettings);
   const [security, setSecurity] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [resolvingLocation, setResolvingLocation] = useState(false);
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -227,8 +256,21 @@ function FarmerSettingsPage() {
   };
 
   const fetchSettings = () => {
-    api.get('/api/farmer/settings').then((res) => {
+    api.get('/api/farmer/settings').then(async (res) => {
       const merged = { ...defaultSettings, ...(res.data || {}) };
+      const hasCoordinates = Number.isFinite(Number(merged.farmLatitude)) && Number.isFinite(Number(merged.farmLongitude));
+      const hasLocationText = Boolean(String(merged.farmLocation || '').trim());
+
+      if (hasCoordinates && !hasLocationText) {
+        const farmLat = Number(merged.farmLatitude);
+        const farmLng = Number(merged.farmLongitude);
+        try {
+          merged.farmLocation = await reverseGeocodeLocation(farmLat, farmLng);
+        } catch {
+          merged.farmLocation = `Selected pin: ${farmLat.toFixed(6)}, ${farmLng.toFixed(6)}`;
+        }
+      }
+
       setSettings(merged);
       setOriginal(merged);
       // Set the language from backend
@@ -322,7 +364,7 @@ function FarmerSettingsPage() {
 
   let content;
   if (activeTab === 'profile') content = <ProfileSection values={settings} onChange={updateField} onSubmit={handleSave} onCancel={handleCancel} saving={saving} onImageChange={handleImageChange} t={t} />;
-  else if (activeTab === 'farm') content = <FarmSection values={settings} onChange={updateField} onSubmit={handleSave} onCancel={handleCancel} saving={saving} t={t} />;
+  else if (activeTab === 'farm') content = <FarmSection values={settings} onChange={updateField} onSubmit={handleSave} onCancel={handleCancel} saving={saving} resolvingLocation={resolvingLocation} setResolvingLocation={setResolvingLocation} t={t} />;
   else if (activeTab === 'bank') content = <BankSection values={settings} onChange={updateField} onSubmit={handleSave} onCancel={handleCancel} saving={saving} t={t} />;
   else if (activeTab === 'security') content = <SecuritySection values={security} onChange={(f, v) => setSecurity((p) => ({ ...p, [f]: v }))} onSubmit={handlePasswordChange} onCancel={() => setSecurity({ currentPassword: '', newPassword: '', confirmPassword: '' })} saving={saving} t={t} />;
   else content = <PreferencesSection values={settings} onChange={updateField} onSubmit={handleSave} onCancel={handleCancel} saving={saving} t={t} changeLanguage={changeLanguage} />;
